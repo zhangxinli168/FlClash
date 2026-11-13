@@ -1,8 +1,8 @@
 diff --git a/adapter/outbound/wireguard.go b/adapter/outbound/wireguard.go
-index 54a671e..98faa46 100644
+index 54a671e..ba0a597 100644
 --- a/adapter/outbound/wireguard.go
 +++ b/adapter/outbound/wireguard.go
-@@ -42,6 +42,30 @@ const (
+@@ -42,6 +42,33 @@ const (
  	ipStackMips   = "mips"
  )
  
@@ -26,14 +26,17 @@ index 54a671e..98faa46 100644
 +	// counts as a plausible gap and how long silence has to last.
 +	heartbeatKeepaliveMinGapMs = int64(5 * 1000)
 +	heartbeatKeepaliveMaxGapMs = int64(300 * 1000)
-+	heartbeatKeepaliveFloorMs  = int64(45 * 1000)
++	// The peer sends keepalives every 25s. A 45s floor would rebuild the
++	// device after a single lost keepalive; 60s tolerates one loss and only
++	// acts when two in a row are missing.
++	heartbeatKeepaliveFloorMs  = int64(60 * 1000)
 +	heartbeatEscalateMillis    = 15000
 +)
 +
  type wireguardGoDevice interface {
  	Close()
  	IpcSet(uapiConf string) error
-@@ -54,12 +78,31 @@ type WireGuard struct {
+@@ -54,12 +81,32 @@ type WireGuard struct {
  	tunDevice wireguardDevice
  	resolver  resolver.Resolver
  
@@ -68,10 +71,30 @@ index 54a671e..98faa46 100644
 +	// device cannot look like a peer that stopped answering.
 +	lastRx        atomic.Int64
 +	rxGapMs       atomic.Int64
++	lastKeepalive atomic.Int64
  	option        WireGuardOption
  	connectAddr   M.Socksaddr
  	localPrefixes []netip.Prefix
-@@ -389,6 +432,10 @@ func NewWireGuard(option WireGuardOption) (*WireGuard, error) {
+@@ -306,6 +353,13 @@ func (w wgSingErrorHandler) NewError(ctx context.Context, err error) {
+ 		log.SingLogger.Debug(fmt.Sprintf("[WG](%s) connection closed: %s", w.name, err))
+ 		return
+ 	}
++	// EMSGSIZE ("message too long") is a per-datagram condition, not a dead
++	// link: the bind rebuilds the socket on its own. Escalating it to Error
++	// makes FlClash show a red banner for something that self-heals.
++	if strings.Contains(err.Error(), "message too long") {
++		log.SingLogger.Debug(fmt.Sprintf("[WG](%s) %s", w.name, err))
++		return
++	}
+ 	log.SingLogger.Error(fmt.Sprintf("[WG](%s) %s", w.name, err))
+ }
+ 
+@@ -385,10 +439,15 @@ func NewWireGuard(option WireGuardOption) (*WireGuard, error) {
+ 	}
+ 	outbound.runCtx, outbound.runCancel = context.WithCancel(context.Background())
+ 	outbound.bind = wireguard.NewClientBind(outbound.runCtx, wgSingErrorHandler{outbound.Name()}, singDialer, isConnect, outbound.connectAddr.AddrPort(), reserved)
++	outbound.bind.SetReceiveHook(outbound.markActivity)
+ 
  	if outbound.bind == nil {
  		return nil, E.New("failed to create wireguard client bind")
  	}
@@ -82,7 +105,7 @@ index 54a671e..98faa46 100644
  
  	var err error
  	outbound.localPrefixes, err = option.Prefixes()
-@@ -557,10 +604,35 @@ func (w *WireGuard) init0(ctx context.Context) (err error) {
+@@ -557,10 +616,35 @@ func (w *WireGuard) init0(ctx context.Context) (err error) {
  
  	logger := &device.Logger{
  		Verbosef: func(format string, args ...interface{}) {
@@ -120,7 +143,7 @@ index 54a671e..98faa46 100644
  		},
  	}
  	var wgDevice wireguardGoDevice
-@@ -603,6 +675,7 @@ func (w *WireGuard) init0(ctx context.Context) (err error) {
+@@ -603,6 +687,7 @@ func (w *WireGuard) init0(ctx context.Context) (err error) {
  	}
  	w.device, w.tunDevice = wgDevice, tunDevice
  	w.initOk.Store(true)
@@ -128,7 +151,7 @@ index 54a671e..98faa46 100644
  	return nil
  }
  
-@@ -615,7 +688,13 @@ func (w *WireGuard) updateServerAddr(ctx context.Context) {
+@@ -615,7 +700,13 @@ func (w *WireGuard) updateServerAddr(ctx context.Context) {
  				log.Warnln("[WG](%s)UpdateServerAddr failed to generate wireguard ipc conf: %s", w.option.Name, err)
  				return
  			}
@@ -143,7 +166,7 @@ index 54a671e..98faa46 100644
  			if err != nil {
  				log.Warnln("[WG](%s)UpdateServerAddr failed to update wireguard ipc conf: %s", w.option.Name, err)
  				return
-@@ -804,6 +883,9 @@ func (w *WireGuard) genIpcConf(ctx context.Context, updateOnly bool) (string, er
+@@ -804,6 +895,9 @@ func (w *WireGuard) genIpcConf(ctx context.Context, updateOnly bool) (string, er
  
  // Close implements C.ProxyAdapter
  func (w *WireGuard) Close() error {
@@ -153,7 +176,7 @@ index 54a671e..98faa46 100644
  	w.runCancel()
  	w.deviceMutex.Lock()
  	wgDevice := w.device
-@@ -814,11 +896,294 @@ func (w *WireGuard) Close() error {
+@@ -814,11 +908,301 @@ func (w *WireGuard) Close() error {
  	return nil
  }
  
@@ -300,6 +323,7 @@ index 54a671e..98faa46 100644
 +func (w *WireGuard) rebindLocked() {
 +	w.runCtx, w.runCancel = context.WithCancel(context.Background())
 +	w.bind = wireguard.NewClientBind(w.runCtx, wgSingErrorHandler{w.Name()}, w.singDialer, w.isConnect, w.connectAddr.AddrPort(), w.bindReserved)
++	w.bind.SetReceiveHook(w.markActivity)
 +}
 +
 +// startWatchdog arms the heartbeat monitor once per proxy.
@@ -313,8 +337,14 @@ index 54a671e..98faa46 100644
 +
 +// markKeepalive records a keepalive from the peer and learns its cadence, so
 +// the silence threshold follows whatever persistent-keepalive the peer uses.
++// markActivity records that the peer sent us something, keepalive or data.
++func (w *WireGuard) markActivity() {
++	w.lastRx.Store(wgNowMillis())
++}
++
 +func (w *WireGuard) markKeepalive(now int64) {
-+	previous := w.lastRx.Swap(now)
++	w.markActivity()
++	previous := w.lastKeepalive.Swap(now)
 +	if previous == 0 {
 +		return
 +	}
@@ -448,7 +478,7 @@ index 54a671e..98faa46 100644
  	if !metadata.Resolved() || w.resolver != nil {
  		r := resolver.DefaultResolver
  		if w.resolver != nil {
-@@ -826,10 +1191,10 @@ func (w *WireGuard) DialContext(ctx context.Context, metadata *C.Metadata) (_ C.
+@@ -826,10 +1210,10 @@ func (w *WireGuard) DialContext(ctx context.Context, metadata *C.Metadata) (_ C.
  		}
  		options := w.DialOptions()
  		options = append(options, dialer.WithResolver(r))
@@ -461,7 +491,7 @@ index 54a671e..98faa46 100644
  	}
  	if err != nil {
  		return nil, err
-@@ -845,11 +1210,17 @@ func (w *WireGuard) ListenPacketContext(ctx context.Context, metadata *C.Metadat
+@@ -845,11 +1229,17 @@ func (w *WireGuard) ListenPacketContext(ctx context.Context, metadata *C.Metadat
  	if err = w.init(ctx); err != nil {
  		return nil, err
  	}
