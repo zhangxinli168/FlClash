@@ -1,0 +1,128 @@
+diff --git a/android/service/src/main/java/com/follow/clash/service/NetworkObserver.kt b/android/service/src/main/java/com/follow/clash/service/NetworkObserver.kt
+index a27f694..5b87700 100644
+--- a/android/service/src/main/java/com/follow/clash/service/NetworkObserver.kt
++++ b/android/service/src/main/java/com/follow/clash/service/NetworkObserver.kt
+@@ -41,6 +41,12 @@ object NetworkObserver {
+     private var currentNetwork: Network? = null
+     private var started = false
+ 
++    // Set by the running VpnService. The VPN itself has to be told which network
++    // it runs on — see VpnService.handleStart — and it can only do that from the
++    // service instance.
++    @Volatile
++    var onPreferredNetworkChanged: ((Network) -> Unit)? = null
++
+     private val request = NetworkRequest.Builder().apply {
+         addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+         addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+@@ -130,10 +136,15 @@ object NetworkObserver {
+             Core.updateDNS(dnsList.joinToString(","))
+         }
+         val network = preferred?.key ?: return
+-        // Sockets protected onto the network we left stay bound to it; closing
+-        // them makes apps reconnect now instead of after a TCP timeout.
+-        if (currentNetwork != null && currentNetwork != network) {
+-            Core.resetNetwork()
++        if (currentNetwork != network) {
++            // Before the reset below, so that a socket created while the core
++            // recovers is protected onto the network we are on now. Sockets
++            // protected onto the network we left stay bound to it; closing them
++            // makes apps reconnect now instead of after a TCP timeout.
++            onPreferredNetworkChanged?.invoke(network)
++            if (currentNetwork != null) {
++                Core.resetNetwork()
++            }
+         }
+         currentNetwork = network
+     }
+diff --git a/android/service/src/main/java/com/follow/clash/service/VpnService.kt b/android/service/src/main/java/com/follow/clash/service/VpnService.kt
+index 7665418..0bc3be6 100644
+--- a/android/service/src/main/java/com/follow/clash/service/VpnService.kt
++++ b/android/service/src/main/java/com/follow/clash/service/VpnService.kt
+@@ -150,6 +150,16 @@ class VpnService : SystemVpnService(), ManagedService {
+                 ?: error("VPN establishment was rejected by the system")
+         }
+         synchronized(tunLock) {
++            // Name the network this VPN runs on, or the system binds every socket
++            // protected from here on to the network we just left: writes keep
++            // succeeding and nothing ever comes back, which is the tunnel going
++            // dark after a Wi-Fi <-> cellular switch.
++            NetworkObserver.onPreferredNetworkChanged = { network ->
++                runCatching { setUnderlyingNetworks(arrayOf(network)) }
++                    .onFailure {
++                        GlobalState.log("Unable to set underlying networks: $it")
++                    }
++            }
+             tunRunning = true
+             try {
+                 // A Core that fails to take the descriptor leaves the system
+@@ -277,6 +287,7 @@ class VpnService : SystemVpnService(), ManagedService {
+         try {
+             modules.stop()
+         } finally {
++            NetworkObserver.onPreferredNetworkChanged = null
+             stopTun()
+         }
+     }
+diff --git a/core/connection.go b/core/connection.go
+index a18014b..7fd3caf 100644
+--- a/core/connection.go
++++ b/core/connection.go
+@@ -1,8 +1,14 @@
+ package core
+ 
+ import (
++	"sync/atomic"
++	"time"
++
++	"github.com/metacubex/mihomo/adapter/outbound"
+ 	"github.com/metacubex/mihomo/component/resolver"
+ 	"github.com/metacubex/mihomo/dns"
++	"github.com/metacubex/mihomo/log"
++	"github.com/metacubex/mihomo/tunnel"
+ 	"github.com/metacubex/mihomo/tunnel/statistic"
+ )
+ 
+@@ -63,6 +69,42 @@ func handleNetworkChanged() {
+ func handleResetNetwork() {
+ 	handleCloseConnections()
+ 	handleNetworkChanged()
++	resetWireGuard()
++}
++
++var lastWireGuardReset atomic.Int64
++
++// wireGuardResetDebounceMillis collapses one network switch into one reset: the
++// switch arrives as several callbacks, and each of them would otherwise rebuild
++// the sockets.
++const wireGuardResetDebounceMillis = 1000
++
++// resetWireGuard drops the transport sockets of every WireGuard outbound so the
++// next packet rebinds them to the network that is current now.
++//
++// Closing connections is not enough for them. A WireGuard outbound holds its own
++// UDP socket, created once and reused forever, and Android binds such a socket
++// to an underlying network at the moment it is protected and never migrates it.
++// After a Wi-Fi <-> cellular switch the socket keeps writing into a network that
++// is gone — writes still succeed, so nothing retries, and the tunnel stays dark
++// until the app restarts. Replacing the socket is the only thing that helps.
++func resetWireGuard() {
++	now := time.Now().UnixMilli()
++	if previous := lastWireGuardReset.Swap(now); previous != 0 && now-previous < wireGuardResetDebounceMillis {
++		log.Debugln("[WG] skip duplicated reset")
++		return
++	}
++	for _, proxy := range tunnel.AllProxies() {
++		wg, ok := proxy.Adapter().(*outbound.WireGuard)
++		if !ok {
++			continue
++		}
++		if err := wg.Reset(); err != nil {
++			log.Warnln("[WG](%s) reset after network change failed: %s", wg.Name(), err)
++			continue
++		}
++		log.Infoln("[WG](%s) reset after network change", wg.Name())
++	}
+ }
+ 
+ // A connection that is already gone is closed as far as the host is concerned.

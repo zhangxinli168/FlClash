@@ -1,0 +1,32 @@
+diff --git a/client_bind.go b/client_bind.go
+index bb39d14..fabf5b7 100644
+--- a/client_bind.go
++++ b/client_bind.go
+@@ -132,6 +132,27 @@ func (c *ClientBind) Close() error {
+ 	return nil
+ }
+ 
++// Reset drops the current socket so the next send or receive dials a fresh one.
++// The bind itself stays open (closed is still false): receive() reports the read
++// error of the dropped socket as recoverable, wireguard-go loops and calls
++// connect() again, and that new socket goes through the socket hook, which binds
++// it to the network that is current now.
++//
++// This is the cheap way out of a dead transport — the device keeps its keys and
++// its session, so traffic resumes on the next packet instead of after a full
++// re-handshake.
++func (c *ClientBind) Reset() {
++	if c.closed.Load() {
++		return
++	}
++	c.connAccess.Lock()
++	defer c.connAccess.Unlock()
++	if serverConn := c.conn; serverConn != nil {
++		_ = serverConn.Close()
++	}
++	c.conn = nil
++}
++
+ func (c *ClientBind) SetMark(mark uint32) error {
+ 	return nil
+ }

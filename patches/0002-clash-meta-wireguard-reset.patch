@@ -1,0 +1,317 @@
+diff --git a/adapter/outbound/wireguard.go b/adapter/outbound/wireguard.go
+index 54a671e..8a6444b 100644
+--- a/adapter/outbound/wireguard.go
++++ b/adapter/outbound/wireguard.go
+@@ -42,6 +42,21 @@ const (
+ 	ipStackMips   = "mips"
+ )
+ 
++const (
++	// heartbeatTick is how often the watchdog reads the counters that the device
++	// log callbacks maintain. It costs one atomic load and no wakeup of its own.
++	heartbeatTick = 3 * time.Second
++	// heartbeatFailThreshold is how many "Handshake did not complete after 5
++	// seconds" reports in a row mean the transport is dead. Two of them are ~10s
++	// of the peer answering nothing.
++	heartbeatFailThreshold = 2
++	// heartbeatMinResetMillis debounces Reset: one network switch arrives as
++	// several callbacks (lost, available, link properties).
++	heartbeatMinResetMillis = 1000
++	// heartbeatResetInitTimeout bounds the re-init that follows a full reset.
++	heartbeatResetInitTimeout = 15 * time.Second
++)
++
+ type wireguardGoDevice interface {
+ 	Close()
+ 	IpcSet(uapiConf string) error
+@@ -60,6 +75,20 @@ type WireGuard struct {
+ 	initOk        atomic.Bool
+ 	initMutex     sync.Mutex
+ 	initErr       error
++
++	// Everything needed to build the bind again from scratch, kept so that a
++	// full reset does not have to re-read the proxy options.
++	singDialer   proxydialer.SingDialer
++	isConnect    bool
++	bindReserved [3]uint8
++
++	// Transport health, fed by the device's own log callbacks; see watchHeartbeat.
++	hbFailStreak atomic.Int32
++	hbGaveUp     atomic.Bool
++	hbStarted    atomic.Bool
++	hbCtx        context.Context
++	hbCancel     context.CancelFunc
++	lastReset    atomic.Int64
+ 	option        WireGuardOption
+ 	connectAddr   M.Socksaddr
+ 	localPrefixes []netip.Prefix
+@@ -389,6 +418,10 @@ func NewWireGuard(option WireGuardOption) (*WireGuard, error) {
+ 	if outbound.bind == nil {
+ 		return nil, E.New("failed to create wireguard client bind")
+ 	}
++	outbound.singDialer = singDialer
++	outbound.isConnect = isConnect
++	outbound.bindReserved = reserved
++	outbound.hbCtx, outbound.hbCancel = context.WithCancel(context.Background())
+ 
+ 	var err error
+ 	outbound.localPrefixes, err = option.Prefixes()
+@@ -557,10 +590,28 @@ func (w *WireGuard) init0(ctx context.Context) (err error) {
+ 
+ 	logger := &device.Logger{
+ 		Verbosef: func(format string, args ...interface{}) {
+-			log.SingLogger.Debug(fmt.Sprintf("[WG](%s) %s", w.option.Name, fmt.Sprintf(format, args...)))
++			message := fmt.Sprintf(format, args...)
++			log.SingLogger.Debug(fmt.Sprintf("[WG](%s) %s", w.option.Name, message))
++			// A completed handshake is the only positive liveness signal the
++			// device offers; everything else in here is about silence.
++			if strings.Contains(message, "Received handshake response") {
++				w.hbFailStreak.Store(0)
++				w.hbGaveUp.Store(false)
++			}
+ 		},
+ 		Errorf: func(format string, args ...interface{}) {
+-			log.SingLogger.Error(fmt.Sprintf("[WG](%s) %s", w.option.Name, fmt.Sprintf(format, args...)))
++			message := fmt.Sprintf(format, args...)
++			log.SingLogger.Error(fmt.Sprintf("[WG](%s) %s", w.option.Name, message))
++			// The device retries a handshake every 5s and only says this when the
++			// peer did not answer at all, so N of these in a row is N*5s of
++			// confirmed silence — which is exactly what a network change leaves
++			// behind when the socket keeps pointing at the network we left.
++			if strings.Contains(message, "Handshake did not complete") {
++				w.hbFailStreak.Add(1)
++			}
++			if strings.Contains(message, "giving up") {
++				w.hbGaveUp.Store(true)
++			}
+ 		},
+ 	}
+ 	var wgDevice wireguardGoDevice
+@@ -603,6 +654,7 @@ func (w *WireGuard) init0(ctx context.Context) (err error) {
+ 	}
+ 	w.device, w.tunDevice = wgDevice, tunDevice
+ 	w.initOk.Store(true)
++	w.startWatchdog()
+ 	return nil
+ }
+ 
+@@ -615,7 +667,13 @@ func (w *WireGuard) updateServerAddr(ctx context.Context) {
+ 				log.Warnln("[WG](%s)UpdateServerAddr failed to generate wireguard ipc conf: %s", w.option.Name, err)
+ 				return
+ 			}
+-			err = w.device.IpcSet(ipcConf)
++			w.deviceMutex.Lock()
++			wgDevice := w.device
++			w.deviceMutex.Unlock()
++			if wgDevice == nil {
++				return
++			}
++			err = wgDevice.IpcSet(ipcConf)
+ 			if err != nil {
+ 				log.Warnln("[WG](%s)UpdateServerAddr failed to update wireguard ipc conf: %s", w.option.Name, err)
+ 				return
+@@ -804,6 +862,9 @@ func (w *WireGuard) genIpcConf(ctx context.Context, updateOnly bool) (string, er
+ 
+ // Close implements C.ProxyAdapter
+ func (w *WireGuard) Close() error {
++	if w.hbCancel != nil {
++		w.hbCancel()
++	}
+ 	w.runCancel()
+ 	w.deviceMutex.Lock()
+ 	wgDevice := w.device
+@@ -814,11 +875,162 @@ func (w *WireGuard) Close() error {
+ 	return nil
+ }
+ 
++// Reset drops the transport sockets so that the next packet dials them again and
++// the socket hook binds them to the network that is current now. The device, the
++// session and the keys survive, so this is the cheap way out: traffic resumes on
++// the next packet instead of after a full handshake.
++//
++// Why the socket and not the device: Android's VpnService.protect() binds a
++// socket to the underlying network at the moment of the call and never migrates
++// it, so a socket created before a Wi-Fi <-> cellular switch keeps sending into
++// a network that is gone. Nothing above the socket can see that — writes succeed
++// and only reads stay empty.
++func (w *WireGuard) Reset() error {
++	if !w.initOk.Load() {
++		return nil
++	}
++	now := time.Now().UnixMilli()
++	if previous := w.lastReset.Swap(now); previous != 0 && now-previous < heartbeatMinResetMillis {
++		return nil
++	}
++	w.initMutex.Lock()
++	bind := w.bind
++	w.initMutex.Unlock()
++	if bind == nil {
++		return nil
++	}
++	bind.Reset()
++	w.serverAddrTime.Store(time.Time{})
++	log.Infoln("[WG](%s) transport sockets dropped, next packet rebinds", w.option.Name)
++	return nil
++}
++
++// ResetFull tears the device and its ip stack down and builds them again. It is
++// slower than Reset — a fresh handshake and a fresh server resolve — and it is
++// the only path for what a socket swap cannot fix: a server address that moved,
++// a peer set that changed, or an ip stack left pointing at a dead route.
++func (w *WireGuard) ResetFull() error {
++	w.initMutex.Lock()
++	if !w.initOk.Load() {
++		w.runCancel()
++		w.rebindLocked()
++		w.initMutex.Unlock()
++		return nil
++	}
++	w.runCancel()
++	w.deviceMutex.Lock()
++	wgDevice, tunDevice := w.device, w.tunDevice
++	w.device, w.tunDevice = nil, nil
++	w.deviceMutex.Unlock()
++	w.initErr = nil
++	w.initOk.Store(false)
++	w.serverAddrTime.Store(time.Time{})
++	w.rebindLocked()
++	w.initMutex.Unlock()
++
++	// The device closes the tun it was built with; only a device that never got
++	// that far leaves the stack to us.
++	if wgDevice != nil {
++		wgDevice.Close()
++	} else if tunDevice != nil {
++		_ = tunDevice.Close()
++	}
++	log.Infoln("[WG](%s) device rebuilt after full reset", w.option.Name)
++
++	ctx, cancel := context.WithTimeout(context.Background(), heartbeatResetInitTimeout)
++	defer cancel()
++	return w.init(ctx)
++}
++
++// rebindLocked replaces the bind with a fresh one. The caller holds initMutex.
++func (w *WireGuard) rebindLocked() {
++	w.runCtx, w.runCancel = context.WithCancel(context.Background())
++	w.bind = wireguard.NewClientBind(w.runCtx, wgSingErrorHandler{w.Name()}, w.singDialer, w.isConnect, w.connectAddr.AddrPort(), w.bindReserved)
++}
++
++// startWatchdog arms the heartbeat monitor once per proxy.
++func (w *WireGuard) startWatchdog() {
++	if !w.hbStarted.CompareAndSwap(false, true) {
++		return
++	}
++	go w.watchHeartbeat()
++}
++
++// watchHeartbeat turns the device's own handshake retries into a reconnect.
++//
++// The device already probes by itself: 15s after the last packet it heard, it
++// sends a new handshake, and every 5s after that it reports that the handshake
++// did not complete. What it cannot do is change the socket it retries through,
++// so it keeps flushing handshakes into the network we left until it gives up
++// after 18 attempts. Replacing that socket is the part only we can do.
++//
++// A note on why this watches handshakes and not received bytes: WireGuard's
++// persistent keepalive is one-way, the peer does not answer it, so "no reads for
++// a while" is the normal state of an idle tunnel. A handshake, unlike a
++// keepalive, always gets a response.
++func (w *WireGuard) watchHeartbeat() {
++	ticker := time.NewTicker(heartbeatTick)
++	defer ticker.Stop()
++	backoff := [...]time.Duration{5 * time.Second, 10 * time.Second, 20 * time.Second}
++	attempt := 0
++	exhausted := false
++	for {
++		select {
++		case <-w.hbCtx.Done():
++			return
++		case <-ticker.C:
++		}
++		if !w.initOk.Load() {
++			continue
++		}
++		failures := w.hbFailStreak.Load()
++		if failures < heartbeatFailThreshold && !w.hbGaveUp.Load() {
++			if failures == 0 {
++				attempt = 0
++			}
++			continue
++		}
++		if attempt >= len(backoff) {
++			// Out of attempts. Stay armed instead of returning: a handshake that
++			// does get through later (a network change, a peer that came back)
++			// clears the streak, and the next silence starts a fresh round.
++			if !exhausted {
++				exhausted = true
++				log.Warnln("[WG](%s) transport still dead after %d resets, leaving it to the next network change", w.option.Name, attempt)
++			}
++			continue
++		}
++		exhausted = false
++		log.Warnln("[WG](%s) heartbeat lost (%d failed handshakes), reset #%d", w.option.Name, failures, attempt+1)
++		w.hbFailStreak.Store(0)
++		w.hbGaveUp.Store(false)
++		time.Sleep(backoff[attempt])
++		var err error
++		if attempt == 0 {
++			err = w.Reset()
++		} else {
++			err = w.ResetFull()
++		}
++		if err != nil {
++			log.Warnln("[WG](%s) reset #%d failed: %s", w.option.Name, attempt+1, err)
++		}
++		attempt++
++	}
++}
++
+ func (w *WireGuard) DialContext(ctx context.Context, metadata *C.Metadata) (_ C.Conn, err error) {
+ 	var conn net.Conn
+ 	if err = w.init(ctx); err != nil {
+ 		return nil, err
+ 	}
++	// A reset swaps the ip stack out from under us; talking to the old one would
++	// dereference nil once it has been closed.
++	w.deviceMutex.Lock()
++	tunDevice := w.tunDevice
++	w.deviceMutex.Unlock()
++	if tunDevice == nil {
++		return nil, E.New("wireguard device is being reset, retry later")
++	}
+ 	if !metadata.Resolved() || w.resolver != nil {
+ 		r := resolver.DefaultResolver
+ 		if w.resolver != nil {
+@@ -826,10 +1038,10 @@ func (w *WireGuard) DialContext(ctx context.Context, metadata *C.Metadata) (_ C.
+ 		}
+ 		options := w.DialOptions()
+ 		options = append(options, dialer.WithResolver(r))
+-		options = append(options, dialer.WithNetDialer(ipStackNetDialer{stack: w.tunDevice}))
++		options = append(options, dialer.WithNetDialer(ipStackNetDialer{stack: tunDevice}))
+ 		conn, err = dialer.NewDialer(options...).DialContext(ctx, "tcp", metadata.RemoteAddress())
+ 	} else {
+-		conn, err = w.tunDevice.DialTCP(ctx, "tcp", netip.AddrPort{}, metadata.AddrPort())
++		conn, err = tunDevice.DialTCP(ctx, "tcp", netip.AddrPort{}, metadata.AddrPort())
+ 	}
+ 	if err != nil {
+ 		return nil, err
+@@ -845,11 +1057,17 @@ func (w *WireGuard) ListenPacketContext(ctx context.Context, metadata *C.Metadat
+ 	if err = w.init(ctx); err != nil {
+ 		return nil, err
+ 	}
++	w.deviceMutex.Lock()
++	tunDevice := w.tunDevice
++	w.deviceMutex.Unlock()
++	if tunDevice == nil {
++		return nil, E.New("wireguard device is being reset, retry later")
++	}
+ 	if err = w.ResolveUDP(ctx, metadata); err != nil {
+ 		return nil, err
+ 	}
+ 	// The ipStack contract guarantees that a generic UDP wildcard supports both address families.
+-	pc, err = w.tunDevice.ListenUDP(ctx, "udp", netip.AddrPort{})
++	pc, err = tunDevice.ListenUDP(ctx, "udp", netip.AddrPort{})
+ 	if err != nil {
+ 		return nil, err
+ 	}

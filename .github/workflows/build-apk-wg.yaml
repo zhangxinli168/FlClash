@@ -1,0 +1,113 @@
+name: build-apk-wg
+
+on:
+  workflow_dispatch:
+    inputs:
+      arch:
+        description: 'Flutter target architecture'
+        required: false
+        default: arm64
+
+jobs:
+  apk:
+    name: Build APK
+    runs-on: ubuntu-latest
+    env:
+      # `go mod edit -replace` rewrites go.mod; -mod=mod lets the build take that
+      # rewrite instead of failing on a stale go.sum.
+      GOFLAGS: -mod=mod
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: false
+
+      # .gitmodules asks for both submodules over SSH, and a fork's runner has no
+      # key for chen08209's repositories; they are public, so fetch them over
+      # HTTPS instead of failing the checkout.
+      - name: Checkout submodules
+        run: |
+          set -euo pipefail
+          git config -f .gitmodules --get-regexp '^submodule\..*\.url$' | while read -r key url; do
+            git config -f .gitmodules "$key" "${url/git@github.com:/https://github.com/}"
+          done
+          git submodule sync --recursive
+          git submodule update --init --recursive
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.1'
+          cache-dependency-path: core/go.sum
+
+      # Three patches, three repositories: the WireGuard transport socket
+      # (sing-wireguard), the device that owns it (Clash.Meta), and the app that
+      # is told the network changed (FlClash).
+      - name: Patch the WireGuard core
+        run: |
+          set -euo pipefail
+          patches="$GITHUB_WORKSPACE/patches"
+
+          git -C core/Clash.Meta apply "$patches/0002-clash-meta-wireguard-reset.patch"
+
+          # The socket Reset lives in sing-wireguard, which arrives as a module
+          # from the proxy. Pin the exact version core/go.mod asks for, patch it,
+          # and point the module at the working copy so the build uses it.
+          git clone --quiet https://github.com/metacubex/sing-wireguard third_party/sing-wireguard
+          git -C third_party/sing-wireguard checkout --quiet e5fa1a607406
+          git -C third_party/sing-wireguard apply "$patches/0001-sing-wireguard-bind-reset.patch"
+          ( cd core && go mod edit -replace "github.com/metacubex/sing-wireguard=../third_party/sing-wireguard" )
+
+          git apply "$patches/0003-flclash-network-reset.patch"
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.47.6'
+          cache: true
+
+      - name: Setup NDK
+        id: ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r28c
+          link-to-sdk: true
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      # Clash.Meta commits this file empty and fills it in at release time; an
+      # empty bundle silently falls back to the system trust store, so an APK
+      # built without this step trusts a different set of roots than a release.
+      - name: Fetch CA certificates
+        shell: bash
+        env:
+          CA_BUNDLE: cacert-2026-09-25.pem
+          CA_BUNDLE_SHA256: a41b5d356aea97a529fe27e0f7316d2f9d946d75927476cf9cf1b90637d00505
+        run: |
+          bundle=core/Clash.Meta/component/ca/ca-certificates.crt
+          curl -fsSL --retry 3 -o "$bundle" "https://curl.se/ca/$CA_BUNDLE"
+          echo "$CA_BUNDLE_SHA256  $bundle" | sha256sum -c -
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+        run: dart setup.dart android --arch ${{ inputs.arch }}
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: flclash-apk
+          path: dist/**
+          overwrite: true
