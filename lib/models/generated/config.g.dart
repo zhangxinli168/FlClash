@@ -167,6 +167,7 @@ const _$DashboardWidgetEnumMap = {
   DashboardWidget.proxyGroups: 'proxyGroups',
   DashboardWidget.connectionStats: 'connectionStats',
   DashboardWidget.intranetIp: 'intranetIp',
+  DashboardWidget.wireGuard: 'wireGuard',
   DashboardWidget.memoryInfo: 'memoryInfo',
 };
 
