@@ -1,0 +1,107 @@
+name: build-wg
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: Platform to package
+        type: choice
+        default: android
+        options:
+          - android
+          - macos
+
+env:
+  GO_VERSION: '1.27.1'
+  FLUTTER_VERSION: '3.47.6'
+  NDK_VERSION: r28c
+  SING_WIREGUARD_COMMIT: e5fa1a607406
+  GOFLAGS: -mod=mod
+
+jobs:
+  build:
+    runs-on: ${{ inputs.platform == 'macos' && 'macos-latest' || 'ubuntu-latest' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      # .gitmodules points at SSH URLs and the runner has no key for them.
+      - name: Checkout submodules over HTTPS
+        run: |
+          sed -i 's|git@github.com:|https://github.com/|' .gitmodules
+          git submodule sync --recursive
+          git submodule update --init --recursive
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: core/go.sum
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+
+      - name: Setup Xcode
+        if: inputs.platform == 'macos'
+        run: |
+          sudo xcode-select -s /Applications/Xcode_26.3.app || sudo xcode-select -s /Applications/Xcode_26.2.app
+          xcodebuild -version
+
+      - name: Setup Gradle
+        if: inputs.platform == 'android'
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Setup NDK
+        if: inputs.platform == 'android'
+        uses: nttld/setup-ndk@v1
+        id: build-ndk
+        with:
+          ndk-version: ${{ env.NDK_VERSION }}
+          add-to-path: true
+          link-to-sdk: true
+
+      # The outbound keeps a protected socket alive forever without these two.
+      - name: Patch Clash.Meta
+        run: git -C core/Clash.Meta apply "$GITHUB_WORKSPACE/patches/0002-clash-meta-wireguard-reconnect.patch"
+
+      - name: Patch sing-wireguard
+        run: |
+          curl -fsSL --retry 3 -o sw.tar.gz \
+            "https://codeload.github.com/MetaCubeX/sing-wireguard/tar.gz/$SING_WIREGUARD_COMMIT"
+          mkdir -p third_party
+          tar xzf sw.tar.gz -C third_party
+          mv "third_party/sing-wireguard-$SING_WIREGUARD_COMMIT" third_party/sing-wireguard
+          git -C third_party/sing-wireguard apply "$GITHUB_WORKSPACE/patches/0001-sing-wireguard-client-bind-reset.patch"
+          cd core
+          go mod edit -replace "github.com/metacubex/sing-wireguard=../third_party/sing-wireguard"
+
+      # The core embeds this bundle: the repository pins an empty placeholder.
+      - name: Fetch CA certificates
+        shell: bash
+        env:
+          CA_BUNDLE: cacert-2026-09-25.pem
+          CA_BUNDLE_SHA256: a41b5d356aea97a529fe27e0f7316d2f9d946d75927476cf9cf1b90637d00505
+        run: |
+          bundle=core/Clash.Meta/component/ca/ca-certificates.crt
+          curl -fsSL --retry 3 -o "$bundle" "https://curl.se/ca/$CA_BUNDLE"
+          echo "$CA_BUNDLE_SHA256  $bundle" | sha256sum -c -
+
+      - name: Get Flutter dependency
+        run: flutter pub get
+
+      - name: Build
+        env:
+          ANDROID_NDK_HOME: ${{ steps.build-ndk.outputs.ndk-path }}
+        run: dart setup.dart ${{ inputs.platform }} -v
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: wg-${{ inputs.platform }}
+          path: ./dist
+          overwrite: true
