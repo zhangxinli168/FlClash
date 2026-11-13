@@ -2906,6 +2906,76 @@ class AppLocalizations {
     return Intl.message('Memory info', name: 'memoryInfo', desc: '', args: []);
   }
 
+  /// `WireGuard`
+  String get wireGuard {
+    return Intl.message('WireGuard', name: 'wireGuard', desc: '', args: []);
+  }
+
+  /// `Handshake state of the WireGuard outbounds, with a reconnect button`
+  String get wireGuardDesc {
+    return Intl.message(
+      'Handshake state of the WireGuard outbounds, with a reconnect button',
+      name: 'wireGuardDesc',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Reconnect`
+  String get wireGuardReconnect {
+    return Intl.message(
+      'Reconnect',
+      name: 'wireGuardReconnect',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Reconnecting…`
+  String get wireGuardReconnecting {
+    return Intl.message(
+      'Reconnecting…',
+      name: 'wireGuardReconnecting',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `No WireGuard outbound in the current profile`
+  String get wireGuardNoOutbound {
+    return Intl.message(
+      'No WireGuard outbound in the current profile',
+      name: 'wireGuardNoOutbound',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Standby`
+  String get wireGuardIdle {
+    return Intl.message('Standby', name: 'wireGuardIdle', desc: '', args: []);
+  }
+
+  /// `Last handshake`
+  String get wireGuardLastHandshake {
+    return Intl.message(
+      'Last handshake',
+      name: 'wireGuardLastHandshake',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `{count} failed handshakes`
+  String wireGuardFailedHandshakes(Object count) {
+    return Intl.message(
+      '$count failed handshakes',
+      name: 'wireGuardFailedHandshakes',
+      desc: '',
+      args: [count],
+    );
+  }
+
   /// `Total`
   String get total {
     return Intl.message('Total', name: 'total', desc: '', args: []);
@@ -7663,8 +7733,7 @@ class AppLocalizations {
   String customImportDroppedSubRules(num count, Object label) {
     return Intl.plural(
       count,
-      one:
-          '1 SUB-RULE rule was dropped, since custom profiles do not support sub-rules',
+      one: '1 SUB-RULE rule was dropped, since custom profiles do not support sub-rules',
       other:
           '$label SUB-RULE rules were dropped, since custom profiles do not support sub-rules',
       name: 'customImportDroppedSubRules',

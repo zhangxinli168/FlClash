@@ -269,10 +269,12 @@ class MessageLookup extends MessageLookupByLibrary {
 
   static String m99(date) => "Действителен до ${date}";
 
-  static String m100(count) =>
-      "${Intl.plural(count, one: '${count} год назад', few: '${count} года назад', many: '${count} лет назад', other: '${count} года назад')}";
+  static String m100(count) => "Неудачных рукопожатий: ${count}";
 
   static String m101(count) =>
+      "${Intl.plural(count, one: '${count} год назад', few: '${count} года назад', many: '${count} лет назад', other: '${count} года назад')}";
+
+  static String m102(count) =>
       "${Intl.plural(count, one: '${count} г. назад', few: '${count} г. назад', many: '${count} л. назад', other: '${count} г. назад')}";
 
   final messages = _notInlinedMessages(_notInlinedMessages);
@@ -1096,9 +1098,10 @@ class MessageLookup extends MessageLookupByLibrary {
     "installCertificateSuccess": MessageLookupByLibrary.simpleMessage(
       "Сертификат установлен",
     ),
-    "installedAppsPermissionDeniedMessage": MessageLookupByLibrary.simpleMessage(
-      "Разрешение на список приложений отклонено, поэтому установленные приложения недоступны. Предоставьте его вручную в системных настройках.",
-    ),
+    "installedAppsPermissionDeniedMessage":
+        MessageLookupByLibrary.simpleMessage(
+          "Разрешение на список приложений отклонено, поэтому установленные приложения недоступны. Предоставьте его вручную в системных настройках.",
+        ),
     "installedAppsPermissionDesc": MessageLookupByLibrary.simpleMessage(
       "Эта система не выдаёт список установленных приложений без разрешения. Предоставьте его, чтобы настроить прокси для отдельных приложений.",
     ),
@@ -2261,14 +2264,32 @@ class MessageLookup extends MessageLookupByLibrary {
     "whitelistMode": MessageLookupByLibrary.simpleMessage(
       "Режим белого списка",
     ),
+    "wireGuard": MessageLookupByLibrary.simpleMessage("WireGuard"),
+    "wireGuardDesc": MessageLookupByLibrary.simpleMessage(
+      "Состояние рукопожатия WireGuard с кнопкой переподключения",
+    ),
+    "wireGuardFailedHandshakes": m100,
+    "wireGuardIdle": MessageLookupByLibrary.simpleMessage("Ожидание"),
+    "wireGuardLastHandshake": MessageLookupByLibrary.simpleMessage(
+      "Последнее рукопожатие",
+    ),
+    "wireGuardNoOutbound": MessageLookupByLibrary.simpleMessage(
+      "В текущем профиле нет исходящего WireGuard",
+    ),
+    "wireGuardReconnect": MessageLookupByLibrary.simpleMessage(
+      "Переподключить",
+    ),
+    "wireGuardReconnecting": MessageLookupByLibrary.simpleMessage(
+      "Переподключение…",
+    ),
     "writeToSystem": MessageLookupByLibrary.simpleMessage(
       "Записывать в систему",
     ),
     "writeToSystemDesc": MessageLookupByLibrary.simpleMessage(
       "«Записывать в систему» также устанавливает системные часы; Android это игнорирует.",
     ),
-    "yearsAgo": m100,
-    "yearsAgoShort": m101,
+    "yearsAgo": m101,
+    "yearsAgoShort": m102,
     "yes": MessageLookupByLibrary.simpleMessage("Да"),
     "zhCN": MessageLookupByLibrary.simpleMessage("Упрощённый китайский"),
   };

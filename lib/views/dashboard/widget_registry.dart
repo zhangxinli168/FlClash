@@ -16,6 +16,7 @@ extension DashboardWidgetView on DashboardWidget {
     DashboardWidget.proxyGroups => const ProxyGroupsCard(),
     DashboardWidget.connectionStats => const ConnectionStatsCard(),
     DashboardWidget.intranetIp => const IntranetIpCard(),
+    DashboardWidget.wireGuard => const WireGuardCard(),
     DashboardWidget.memoryInfo => const MemoryInfo(),
   };
 
@@ -30,6 +31,7 @@ extension DashboardWidgetView on DashboardWidget {
     DashboardWidget.proxyGroups => AppGlyphs.layers,
     DashboardWidget.connectionStats => AppGlyphs.connections,
     DashboardWidget.intranetIp => AppGlyphs.devices,
+    DashboardWidget.wireGuard => AppGlyphs.vpn,
     DashboardWidget.memoryInfo => AppGlyphs.memory,
   };
 
@@ -46,6 +48,7 @@ extension DashboardWidgetView on DashboardWidget {
       DashboardWidget.proxyGroups => appLocalizations.proxyGroup,
       DashboardWidget.connectionStats => appLocalizations.connectionStats,
       DashboardWidget.intranetIp => appLocalizations.intranetIP,
+      DashboardWidget.wireGuard => appLocalizations.wireGuard,
       DashboardWidget.memoryInfo => appLocalizations.memoryInfo,
     };
   }
@@ -56,6 +59,7 @@ extension DashboardWidgetView on DashboardWidget {
       DashboardWidget.currentOutbound => appLocalizations.currentOutboundDesc,
       DashboardWidget.connectionStats => appLocalizations.connectionStatsDesc,
       DashboardWidget.memoryInfo => appLocalizations.memoryInfoDesc,
+      DashboardWidget.wireGuard => appLocalizations.wireGuardDesc,
       _ => null,
     };
   }

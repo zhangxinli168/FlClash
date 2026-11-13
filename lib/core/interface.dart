@@ -6,6 +6,7 @@ import 'package:fl_clash/models/models.dart';
 
 import 'desktop/model.dart';
 import 'method.dart';
+import 'wire_guard_status.dart';
 
 /// A method answers its result or throws: a [CoreMethodException] for what the
 /// Core reports or a Core out of reach, a [TimeoutException] for no answer.
@@ -322,6 +323,27 @@ abstract class CoreHandlerInterface {
   Future<void> clearDnsCache() => _command(CoreMethod.dnsClearCache);
 
   Future<void> reportNetworkChange() => _command(CoreMethod.networkChanged);
+
+  Future<List<WireGuardStatus>> getWireGuardStatus() {
+    return _query(
+      CoreMethod.wgStatus,
+      (data) => (data as List)
+          .whereType<Map<Object?, Object?>>()
+          .map(
+            (item) => WireGuardStatus.fromJson(
+              item.map((key, value) => MapEntry(key.toString(), value)),
+            ),
+          )
+          .toList(),
+    );
+  }
+
+  Future<void> resetWireGuard({String? name, bool full = false}) {
+    return _command(
+      CoreMethod.wgReset,
+      arguments: {'name': ?name, 'full': full},
+    );
+  }
 
   Future<void> startLog() => _commandUnobserved(CoreMethod.logStart);
 

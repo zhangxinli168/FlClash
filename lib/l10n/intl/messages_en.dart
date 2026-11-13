@@ -270,10 +270,12 @@ class MessageLookup extends MessageLookupByLibrary {
 
   static String m99(date) => "Valid until ${date}";
 
-  static String m100(count) =>
+  static String m100(count) => "${count} failed handshakes";
+
+  static String m101(count) =>
       "${Intl.plural(count, one: '1 year ago', other: '${count} years ago')}";
 
-  static String m101(count) => "${Intl.plural(count, other: '${count}y ago')}";
+  static String m102(count) => "${Intl.plural(count, other: '${count}y ago')}";
 
   final messages = _notInlinedMessages(_notInlinedMessages);
   static Map<String, Function> _notInlinedMessages(_) => <String, Function>{
@@ -1048,9 +1050,10 @@ class MessageLookup extends MessageLookupByLibrary {
     "installCertificateSuccess": MessageLookupByLibrary.simpleMessage(
       "Certificate installed",
     ),
-    "installedAppsPermissionDeniedMessage": MessageLookupByLibrary.simpleMessage(
-      "The app list permission was denied, so installed apps cannot be listed. Please grant it manually in system settings.",
-    ),
+    "installedAppsPermissionDeniedMessage":
+        MessageLookupByLibrary.simpleMessage(
+          "The app list permission was denied, so installed apps cannot be listed. Please grant it manually in system settings.",
+        ),
     "installedAppsPermissionDesc": MessageLookupByLibrary.simpleMessage(
       "This system hides the installed app list until the permission is granted. Authorize it to configure the per-app proxy.",
     ),
@@ -2145,12 +2148,28 @@ class MessageLookup extends MessageLookupByLibrary {
       "WebDAV configuration",
     ),
     "whitelistMode": MessageLookupByLibrary.simpleMessage("Whitelist mode"),
+    "wireGuard": MessageLookupByLibrary.simpleMessage("WireGuard"),
+    "wireGuardDesc": MessageLookupByLibrary.simpleMessage(
+      "Handshake state of the WireGuard outbounds, with a reconnect button",
+    ),
+    "wireGuardFailedHandshakes": m100,
+    "wireGuardIdle": MessageLookupByLibrary.simpleMessage("Standby"),
+    "wireGuardLastHandshake": MessageLookupByLibrary.simpleMessage(
+      "Last handshake",
+    ),
+    "wireGuardNoOutbound": MessageLookupByLibrary.simpleMessage(
+      "No WireGuard outbound in the current profile",
+    ),
+    "wireGuardReconnect": MessageLookupByLibrary.simpleMessage("Reconnect"),
+    "wireGuardReconnecting": MessageLookupByLibrary.simpleMessage(
+      "Reconnecting…",
+    ),
     "writeToSystem": MessageLookupByLibrary.simpleMessage("Write to system"),
     "writeToSystemDesc": MessageLookupByLibrary.simpleMessage(
       "Write to system also sets the system clock; Android ignores it.",
     ),
-    "yearsAgo": m100,
-    "yearsAgoShort": m101,
+    "yearsAgo": m101,
+    "yearsAgoShort": m102,
     "yes": MessageLookupByLibrary.simpleMessage("Yes"),
     "zhCN": MessageLookupByLibrary.simpleMessage("Simplified Chinese"),
   };

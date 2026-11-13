@@ -242,9 +242,11 @@ class MessageLookup extends MessageLookupByLibrary {
 
   static String m99(date) => "有効期限 ${date}";
 
-  static String m100(count) => "${count} 年前";
+  static String m100(count) => "ハンドシェイク失敗 ${count} 回";
 
   static String m101(count) => "${count} 年前";
+
+  static String m102(count) => "${count} 年前";
 
   final messages = _notInlinedMessages(_notInlinedMessages);
   static Map<String, Function> _notInlinedMessages(_) => <String, Function>{
@@ -1843,12 +1845,24 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "webDAVConfiguration": MessageLookupByLibrary.simpleMessage("WebDAV設定"),
     "whitelistMode": MessageLookupByLibrary.simpleMessage("ホワイトリストモード"),
+    "wireGuard": MessageLookupByLibrary.simpleMessage("WireGuard"),
+    "wireGuardDesc": MessageLookupByLibrary.simpleMessage(
+      "WireGuard アウトバウンドのハンドシェイク状態と再接続ボタン",
+    ),
+    "wireGuardFailedHandshakes": m100,
+    "wireGuardIdle": MessageLookupByLibrary.simpleMessage("待機"),
+    "wireGuardLastHandshake": MessageLookupByLibrary.simpleMessage("最終ハンドシェイク"),
+    "wireGuardNoOutbound": MessageLookupByLibrary.simpleMessage(
+      "現在のプロファイルに WireGuard アウトバウンドがありません",
+    ),
+    "wireGuardReconnect": MessageLookupByLibrary.simpleMessage("再接続"),
+    "wireGuardReconnecting": MessageLookupByLibrary.simpleMessage("再接続中…"),
     "writeToSystem": MessageLookupByLibrary.simpleMessage("システムに書き込む"),
     "writeToSystemDesc": MessageLookupByLibrary.simpleMessage(
       "システムに書き込むを有効にするとシステムクロックも設定します。Android では無視されます。",
     ),
-    "yearsAgo": m100,
-    "yearsAgoShort": m101,
+    "yearsAgo": m101,
+    "yearsAgoShort": m102,
     "yes": MessageLookupByLibrary.simpleMessage("はい"),
     "zhCN": MessageLookupByLibrary.simpleMessage("簡体字中国語"),
   };

@@ -238,9 +238,11 @@ class MessageLookup extends MessageLookupByLibrary {
 
   static String m99(date) => "有效期至 ${date}";
 
-  static String m100(count) => "${count} 年前";
+  static String m100(count) => "${count} 次握手失败";
 
   static String m101(count) => "${count} 年前";
+
+  static String m102(count) => "${count} 年前";
 
   final messages = _notInlinedMessages(_notInlinedMessages);
   static Map<String, Function> _notInlinedMessages(_) => <String, Function>{
@@ -1665,12 +1667,24 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "webDAVConfiguration": MessageLookupByLibrary.simpleMessage("WebDAV配置"),
     "whitelistMode": MessageLookupByLibrary.simpleMessage("白名单模式"),
+    "wireGuard": MessageLookupByLibrary.simpleMessage("WireGuard"),
+    "wireGuardDesc": MessageLookupByLibrary.simpleMessage(
+      "WireGuard 出站的握手状态，可一键重连",
+    ),
+    "wireGuardFailedHandshakes": m100,
+    "wireGuardIdle": MessageLookupByLibrary.simpleMessage("待命"),
+    "wireGuardLastHandshake": MessageLookupByLibrary.simpleMessage("上次握手"),
+    "wireGuardNoOutbound": MessageLookupByLibrary.simpleMessage(
+      "当前配置里没有 WireGuard 出站",
+    ),
+    "wireGuardReconnect": MessageLookupByLibrary.simpleMessage("重新连接"),
+    "wireGuardReconnecting": MessageLookupByLibrary.simpleMessage("正在重连…"),
     "writeToSystem": MessageLookupByLibrary.simpleMessage("写入系统"),
     "writeToSystemDesc": MessageLookupByLibrary.simpleMessage(
       "写入系统会同时设置系统时钟，Android 上不生效。",
     ),
-    "yearsAgo": m100,
-    "yearsAgoShort": m101,
+    "yearsAgo": m101,
+    "yearsAgoShort": m102,
     "yes": MessageLookupByLibrary.simpleMessage("是"),
     "zhCN": MessageLookupByLibrary.simpleMessage("中文简体"),
   };

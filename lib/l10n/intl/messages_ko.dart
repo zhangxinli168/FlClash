@@ -246,9 +246,11 @@ class MessageLookup extends MessageLookupByLibrary {
 
   static String m99(date) => "${date}까지 유효";
 
-  static String m100(count) => "${Intl.plural(count, other: '${count}년 전')}";
+  static String m100(count) => "핸드셰이크 실패 ${count}회";
 
   static String m101(count) => "${Intl.plural(count, other: '${count}년 전')}";
+
+  static String m102(count) => "${Intl.plural(count, other: '${count}년 전')}";
 
   final messages = _notInlinedMessages(_notInlinedMessages);
   static Map<String, Function> _notInlinedMessages(_) => <String, Function>{
@@ -1815,12 +1817,24 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "webDAVConfiguration": MessageLookupByLibrary.simpleMessage("WebDAV 구성"),
     "whitelistMode": MessageLookupByLibrary.simpleMessage("화이트리스트 모드"),
+    "wireGuard": MessageLookupByLibrary.simpleMessage("WireGuard"),
+    "wireGuardDesc": MessageLookupByLibrary.simpleMessage(
+      "WireGuard 아웃바운드의 핸드셰이크 상태와 재연결 버튼",
+    ),
+    "wireGuardFailedHandshakes": m100,
+    "wireGuardIdle": MessageLookupByLibrary.simpleMessage("대기"),
+    "wireGuardLastHandshake": MessageLookupByLibrary.simpleMessage("마지막 핸드셰이크"),
+    "wireGuardNoOutbound": MessageLookupByLibrary.simpleMessage(
+      "현재 프로필에 WireGuard 아웃바운드가 없습니다",
+    ),
+    "wireGuardReconnect": MessageLookupByLibrary.simpleMessage("다시 연결"),
+    "wireGuardReconnecting": MessageLookupByLibrary.simpleMessage("다시 연결 중…"),
     "writeToSystem": MessageLookupByLibrary.simpleMessage("시스템에 기록"),
     "writeToSystemDesc": MessageLookupByLibrary.simpleMessage(
       "시스템에 기록하면 시스템 시계도 설정합니다. Android에서는 무시됩니다.",
     ),
-    "yearsAgo": m100,
-    "yearsAgoShort": m101,
+    "yearsAgo": m101,
+    "yearsAgoShort": m102,
     "yes": MessageLookupByLibrary.simpleMessage("예"),
     "zhCN": MessageLookupByLibrary.simpleMessage("중국어 간체"),
   };
