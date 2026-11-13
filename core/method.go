@@ -226,6 +226,8 @@ var methodHandlers = map[CoreMethod]methodHandler{
 	connectionResetMethod:    action(handleResetConnections),
 	dnsClearCacheMethod:      action(handleClearDnsCache),
 	networkChangedMethod:     action(handleNetworkChanged),
+	wgStatusMethod:           withoutArguments(handleWireGuardStatus),
+	wgResetMethod:            command(handleWireGuardReset),
 
 	logStartMethod:      action(handleStartLog),
 	logStopMethod:       action(handleStopLog),

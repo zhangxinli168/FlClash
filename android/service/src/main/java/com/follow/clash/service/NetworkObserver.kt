@@ -39,7 +39,17 @@ object NetworkObserver {
     }
     private var currentDnsList = listOf<String>()
     private var currentNetwork: Network? = null
+    // A network keeps its identity across a data-subscription switch, but the
+    // interface and the address it hands out change. Sockets protected onto the
+    // old ones are just as dead, so the signature takes part in the comparison.
+    private var currentLinkSignature: String? = null
     private var started = false
+
+    // Set by the running VpnService. The VPN itself has to be told which network
+    // it runs on — see VpnService.handleStart — and it can only do that from the
+    // service instance.
+    @Volatile
+    var onPreferredNetworkChanged: ((Network) -> Unit)? = null
 
     private val request = NetworkRequest.Builder().apply {
         addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
@@ -97,6 +107,22 @@ object NetworkObserver {
             .onFailure { error -> GlobalState.log("Unable to observe networks: $error") }
     }
 
+    private fun linkSignature(network: Network): String? {
+        val linkProperties = runCatching {
+            connectivity?.getLinkProperties(network)
+        }.getOrNull() ?: return null
+        val addresses = linkProperties.linkAddresses
+            .mapNotNull { linkAddress -> linkAddress.address?.hostAddress }
+            .filterNot { address ->
+                address.startsWith("fe80") || address == "127.0.0.1" || address == "::1"
+            }
+            .sorted()
+        if (addresses.isEmpty()) {
+            return null
+        }
+        return (linkProperties.interfaceName ?: "") + "|" + addresses.joinToString(",")
+    }
+
     private fun networkPriority(entry: Map.Entry<Network, NetworkInfo>): Int {
         val capabilities = connectivity?.getNetworkCapabilities(entry.key)
         return when {
@@ -130,12 +156,25 @@ object NetworkObserver {
             Core.updateDNS(dnsList.joinToString(","))
         }
         val network = preferred?.key ?: return
-        // Sockets protected onto the network we left stay bound to it; closing
-        // them makes apps reconnect now instead of after a TCP timeout.
-        if (currentNetwork != null && currentNetwork != network) {
-            Core.resetNetwork()
+        val signature = linkSignature(network)
+        val signatureChanged = signature != null &&
+            currentLinkSignature != null &&
+            signature != currentLinkSignature
+        val changed = currentNetwork != network || signatureChanged
+        if (changed) {
+            // Before the reset below, so that a socket created while the core
+            // recovers is protected onto the network we are on now. Sockets
+            // protected onto the network we left stay bound to it; closing them
+            // makes apps reconnect now instead of after a TCP timeout.
+            onPreferredNetworkChanged?.invoke(network)
+            if (currentNetwork != null) {
+                Core.resetNetwork()
+            }
         }
         currentNetwork = network
+        if (signature != null) {
+            currentLinkSignature = signature
+        }
     }
 }
 

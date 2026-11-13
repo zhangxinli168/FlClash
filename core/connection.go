@@ -1,8 +1,14 @@
 package core
 
 import (
+	"sync/atomic"
+	"time"
+
+	"github.com/metacubex/mihomo/adapter/outbound"
 	"github.com/metacubex/mihomo/component/resolver"
 	"github.com/metacubex/mihomo/dns"
+	"github.com/metacubex/mihomo/log"
+	"github.com/metacubex/mihomo/tunnel"
 	"github.com/metacubex/mihomo/tunnel/statistic"
 )
 
@@ -56,6 +62,9 @@ func handleClearDnsCache() {
 // Android's NetworkObserver reports through handleResetNetwork.
 func handleNetworkChanged() {
 	handleClearDnsCache()
+	// Desktop has no NetworkObserver: a switch reaches the Core as this method
+	// alone, so the WireGuard transports are dropped here too.
+	resetWireGuard()
 }
 
 // A connection that went out over a network the device has left hangs until
@@ -63,6 +72,44 @@ func handleNetworkChanged() {
 func handleResetNetwork() {
 	handleCloseConnections()
 	handleNetworkChanged()
+	resetWireGuard()
+}
+
+var lastWireGuardReset atomic.Int64
+
+// wireGuardResetDebounceMillis collapses one network switch into one reset: the
+// switch arrives as several callbacks, and each of them would otherwise rebuild
+// the sockets.
+const wireGuardResetDebounceMillis = 1000
+
+// resetWireGuard drops the transport sockets of every WireGuard outbound so the
+// next packet rebinds them to the network that is current now.
+//
+// Closing connections is not enough for them. A WireGuard outbound holds its own
+// UDP socket, created once and reused forever, and Android binds such a socket
+// to an underlying network at the moment it is protected and never migrates it.
+// After a Wi-Fi <-> cellular switch the socket keeps writing into a network that
+// is gone — writes still succeed, so nothing retries, and the tunnel stays dark
+// until the app restarts. Replacing the socket is the only thing that helps.
+func resetWireGuard() {
+	log.Debugln("[WG] resetWireGuard scan %d proxies", len(tunnel.AllProxies()))
+	now := time.Now().UnixMilli()
+	if previous := lastWireGuardReset.Swap(now); previous != 0 && now-previous < wireGuardResetDebounceMillis {
+		log.Debugln("[WG] skip duplicated reset")
+		return
+	}
+	for _, proxy := range tunnel.AllProxies() {
+		wg, ok := outbound.AsWireGuard(proxy.Adapter())
+		if !ok {
+			log.Debugln("[WG] skip %s as %T", proxy.Name(), proxy.Adapter())
+			continue
+		}
+		if err := wg.Reconnect(); err != nil {
+			log.Warnln("[WG](%s) reconnect after network change failed: %s", wg.Name(), err)
+			continue
+		}
+		log.Infoln("[WG](%s) reconnected after network change", wg.Name())
+	}
 }
 
 // A connection that is already gone is closed as far as the host is concerned.

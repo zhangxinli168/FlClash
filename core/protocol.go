@@ -62,6 +62,9 @@ const (
 	dnsClearCacheMethod      CoreMethod = "dns.clearCache"
 	networkChangedMethod     CoreMethod = "network.changed"
 
+	wgStatusMethod CoreMethod = "wg.status"
+	wgResetMethod  CoreMethod = "wg.reset"
+
 	logStartMethod      CoreMethod = "log.start"
 	logStopMethod       CoreMethod = "log.stop"
 	listenerStartMethod CoreMethod = "listener.start"

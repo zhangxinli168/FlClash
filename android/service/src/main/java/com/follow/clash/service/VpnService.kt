@@ -150,6 +150,16 @@ class VpnService : SystemVpnService(), ManagedService {
                 ?: error("VPN establishment was rejected by the system")
         }
         synchronized(tunLock) {
+            // Name the network this VPN runs on, or the system binds every socket
+            // protected from here on to the network we just left: writes keep
+            // succeeding and nothing ever comes back, which is the tunnel going
+            // dark after a Wi-Fi <-> cellular switch.
+            NetworkObserver.onPreferredNetworkChanged = { network ->
+                runCatching { setUnderlyingNetworks(arrayOf(network)) }
+                    .onFailure {
+                        GlobalState.log("Unable to set underlying networks: $it")
+                    }
+            }
             tunRunning = true
             try {
                 // A Core that fails to take the descriptor leaves the system
@@ -277,6 +287,7 @@ class VpnService : SystemVpnService(), ManagedService {
         try {
             modules.stop()
         } finally {
+            NetworkObserver.onPreferredNetworkChanged = null
             stopTun()
         }
     }
